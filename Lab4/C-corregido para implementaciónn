@@ -1,0 +1,245 @@
+/*
+ * Medidor de temperatura con LM35, displays 7 segmentos, LEDs y alarma sonora
+ * PIC16F887, XC8, oscilador interno 8 MHz
+ * 
+ * Referencias ADC: RA2 (VREF- = GND), RA3 (VREF+ = +5V)
+ * Display: 516AS (cátodo común)
+ * Selectores: Decenas en RC4, Unidades en RC3
+ */
+
+#define _XTAL_FREQ 8000000
+#include <xc.h>
+
+// CONFIGURATION BITS
+#pragma config FOSC = INTRC_NOCLKOUT
+#pragma config WDTE = OFF
+#pragma config PWRTE = ON
+#pragma config MCLRE = ON
+#pragma config CP = OFF
+#pragma config CPD = OFF
+#pragma config BOREN = ON
+#pragma config IESO = OFF
+#pragma config FCMEN = OFF
+#pragma config LVP = OFF
+#pragma config BOR4V = BOR40V
+#pragma config WRT = OFF
+#pragma config DEBUG = OFF
+
+// ---- Definición de pines ----
+// LEDs de temperatura (9 LEDs) - SOLO RD0-RD7 y RC7
+#define LED_AZUL1   RD0
+#define LED_AZUL2   RD1
+#define LED_AZUL3   RD2
+#define LED_BLANCO1 RD3
+#define LED_BLANCO2 RD4
+#define LED_BLANCO3 RD5
+#define LED_ROJO1   RD6
+#define LED_ROJO2   RD7
+#define LED_ROJO3   RC7
+
+// Selectores de display (activos en bajo para cátodo común)
+#define SEL_DECENAS     RC4     // RC4 (pin 23) - SIN CONFLICTO
+#define SEL_UNIDADES    RC3     // RC3 (pin 17)
+
+// Tabla de segmentos para cátodo común (display 516AS)
+const unsigned char segmentos[] = {
+    0b00111111,  // 0
+    0b00000110,  // 1
+    0b01011011,  // 2
+    0b01001111,  // 3
+    0b01100110,  // 4
+    0b01101101,  // 5
+    0b01111101,  // 6
+    0b00000111,  // 7
+    0b01111111,  // 8
+    0b01101111   // 9
+};
+
+// Umbrales de temperatura
+#define TEMP_NORMAL_MIN 15
+#define TEMP_NORMAL_MAX 30
+
+// Prototipos
+void ADC_Init(void);
+unsigned int read_adc(void);
+void init_pwm(void);
+void set_pwm_duty(unsigned char duty);
+void actualizar_leds(unsigned int temp);
+void mostrar_temperatura(unsigned int temp);
+void delay_ms(unsigned int ms);
+
+unsigned int temperatura_actual = 0;
+
+// -----------------------------------------------------------------
+void ADC_Init(void) {
+    TRISA0 = 1;
+    TRISA2 = 1;
+    TRISA3 = 1;
+    
+    ANSEL = 0b00000001;
+    ANSELH = 0x00;
+    
+    ADCON1 = 0b10110000;
+    
+    ADCON0bits.CHS = 0;
+    ADCON0bits.ADON = 1;
+    ADCON0bits.ADCS0 = 1;
+    ADCON0bits.ADCS1 = 0;
+    __delay_us(50);
+}
+
+// -----------------------------------------------------------------
+unsigned int read_adc(void) {
+    ADCON0bits.GO = 1;
+    while(ADCON0bits.GO);
+    return ((unsigned int)ADRESH << 8) | ADRESL;
+}
+
+// -----------------------------------------------------------------
+void init_pwm(void) {
+    TRISC1 = 0;
+    CCP2CON = 0b00001100;
+    CCPR2L = 0;
+    T2CON = 0b00000111;
+    set_pwm_duty(0);
+}
+
+void set_pwm_duty(unsigned char duty) {
+    CCPR2L = duty >> 2;
+    CCP2CONbits.DC2B0 = duty & 0b00000001;
+    CCP2CONbits.DC2B1 = (duty >> 1) & 0b00000001;
+}
+
+// -----------------------------------------------------------------
+void actualizar_leds(unsigned int temp) {
+    unsigned char num_leds = 0;
+    unsigned char pwm_value = 0;
+    
+    // Apagar todos los LEDs
+    RD0 = RD1 = RD2 = 0;
+    RD3 = RD4 = RD5 = 0;
+    RD6 = RD7 = 0;
+    RC7 = 0;
+    
+    if (temp < TEMP_NORMAL_MIN) {
+        // Zona fría
+        if (temp <= 4) num_leds = 3;
+        else if (temp <= 9) num_leds = 2;
+        else num_leds = 1;
+        
+        if (num_leds >= 1) RD0 = 1;
+        if (num_leds >= 2) RD1 = 1;
+        if (num_leds >= 3) RD2 = 1;
+        
+        if (num_leds <= 1) pwm_value = 128;
+        else if (num_leds <= 2) pwm_value = 192;
+        else pwm_value = 255;
+    }
+    else if (temp >= TEMP_NORMAL_MIN && temp <= TEMP_NORMAL_MAX) {
+        // Zona normal
+        if (temp <= 19) num_leds = 1;
+        else if (temp <= 24) num_leds = 2;
+        else num_leds = 3;
+        
+        if (num_leds >= 1) RD3 = 1;
+        if (num_leds >= 2) RD4 = 1;
+        if (num_leds >= 3) RD5 = 1;
+        
+        pwm_value = 0;
+    }
+    else {
+        // Zona caliente
+        unsigned int exceso = temp - TEMP_NORMAL_MAX;
+        if (exceso > 20) exceso = 20;
+        
+        if (exceso <= 6) num_leds = 1;
+        else if (exceso <= 13) num_leds = 2;
+        else num_leds = 3;
+        
+        if (num_leds >= 1) RD6 = 1;
+        if (num_leds >= 2) RD7 = 1;
+        if (num_leds >= 3) RC7 = 1;
+        
+        if (num_leds <= 1) pwm_value = 128;
+        else if (num_leds <= 2) pwm_value = 192;
+        else pwm_value = 255;
+    }
+    
+    set_pwm_duty(pwm_value);
+}
+
+// -----------------------------------------------------------------
+void mostrar_temperatura(unsigned int temp) {
+    unsigned char decenas = temp / 10;
+    unsigned char unidades = temp % 10;
+    
+    // Apagar ambos selectores ANTES de poner segmentos
+    SEL_DECENAS = 1;
+    SEL_UNIDADES = 1;
+    __delay_us(50);
+    
+    // Mostrar decenas
+    PORTB = segmentos[decenas];
+    SEL_DECENAS = 0;     // Enciende decenas
+    SEL_UNIDADES = 1;
+    __delay_us(500);     // Tiempo para que se vea bien
+    
+    // Apagar antes de cambiar
+    SEL_DECENAS = 1;
+    __delay_us(50);
+    
+    // Mostrar unidades
+    PORTB = segmentos[unidades];
+    SEL_DECENAS = 1;
+    SEL_UNIDADES = 0;    // Enciende unidades
+    __delay_us(500);
+    
+    // Apagar todo y limpiar PORTB
+    SEL_DECENAS = 1;
+    SEL_UNIDADES = 1;
+    PORTB = 0x00;
+}
+
+// -----------------------------------------------------------------
+void delay_ms(unsigned int ms) {
+    while(ms--) __delay_ms(1);
+}
+
+// -----------------------------------------------------------------
+void main(void) {
+    OSCCON = 0b01110000;
+    while(!OSCCONbits.HTS);
+    
+    // Configuración de puertos
+    TRISB = 0x00;         // Segmentos
+    TRISD = 0x00;         // LEDs RD0-RD7
+    TRISC = 0x00;         // Todo puerto C salidas
+    TRISC1 = 0;           // PWM
+    TRISC3 = 0;           // Selector unidades
+    TRISC4 = 0;           // Selector decenas (RC4)
+    TRISC7 = 0;           // LED rojo 3
+    TRISA = 0b00001101;   // RA0, RA2, RA3 entradas
+    
+    ANSEL = 0b00000001;
+    ANSELH = 0x00;
+    
+    // Inicializar todo apagado
+    PORTB = 0x00;
+    PORTD = 0x00;
+    PORTC = 0x00;
+    
+    ADC_Init();
+    init_pwm();
+    
+    while(1) {
+        unsigned int adc = read_adc();
+        temperatura_actual = ((unsigned long)adc * 500UL) / 1024UL;
+        
+        if(temperatura_actual > 60) temperatura_actual = 60;
+        
+        actualizar_leds(temperatura_actual);
+        mostrar_temperatura(temperatura_actual);
+        
+        delay_ms(50);
+    }
+}
