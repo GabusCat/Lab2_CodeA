@@ -1,10 +1,6 @@
 /*
  * Medidor de temperatura con LM35, displays 7 segmentos, LEDs y alarma sonora
  * PIC16F887, XC8, oscilador interno 8 MHz
- * 
- * Rango de alarma: 15°C a 25°C (fuera de ese rango suena el buzzer)
- * Rango de LEDs: frío (<15°C) azules, normal (15-25°C) blancos, caliente (>25°C) rojos
- */
 
 #define _XTAL_FREQ 8000000
 #include <xc.h>
@@ -59,17 +55,17 @@ const unsigned char segmentos[] = {
     0b1101111   // 9
 };
 
-// Umbrales de temperatura para alarma (rango deseado: 18-40°C)
-#define ALARMA_MIN 18
-#define ALARMA_MAX 40
-#define TEMP_MIN 18
-#define TEMP_MAX 40
+// Umbrales de temperatura para alarma (rango deseado: 25-35°C)
+#define ALARMA_MIN 25
+#define ALARMA_MAX 35
+#define TEMP_MIN 25
+#define TEMP_MAX 35
 
 // Umbrales para los LEDs de color (ajústalos si quieres)
-#define LED_FRIO_MAX   17   // <18°C -> azules
-#define LED_NORMAL_MIN 18   // 18-40°C -> blancos
-#define LED_NORMAL_MAX 40
-#define LED_CALIENTE_MIN 41 // 40>°C -> rojos
+#define LED_FRIO_MAX   24   // <25°C -> azules
+#define LED_NORMAL_MIN 25   // 25-35°C -> blancos
+#define LED_NORMAL_MAX 35
+#define LED_CALIENTE_MIN 36 // 35>°C -> rojos
 
 // Prototipos
 void ADC_Init(void);
@@ -132,17 +128,15 @@ void actualizar_leds(unsigned int temp) {
     LED_CALIENTE = 0;
     
     if (temp < TEMP_MIN) {  // TEMP_MIN = 18
-        // Zona fría (0-17°C)
+        // Zona fría (0-24°C)
         LED_FRIO = 1;
         // Calcular número de LEDs azules: a más frío, más LEDs
-        // Mapeo lineal: 0°C -> 3 LEDs, 14°C -> 1 LED (para que se note el cambio)
-        // Usamos una regla de tres simple: num = 3 - (temp * 2 / 14) , pero que dé 3 para 0, 2 para 7, 1 para 14
-        if (temp <= 5)
+        if (temp <= 10)
             num_leds = 3;
-        else if (temp <= 10)
+        else if (temp <= 17)
             num_leds = 2;
         else
-            num_leds = 1;   // para temp 11-17
+            num_leds = 1;   
         
         if (num_leds >= 1) LED_AZUL1 = 1;
         if (num_leds >= 2) LED_AZUL2 = 1;
@@ -153,13 +147,12 @@ void actualizar_leds(unsigned int temp) {
         else if (num_leds <= 2) set_pwm_duty(85);
         else set_pwm_duty(128);
     }
-    else if (temp >= TEMP_MIN && temp <= TEMP_MAX) {  // TEMP_MAX = 40
-        // Zona normal (18-40°C)
+    else if (temp >= TEMP_MIN && temp <= TEMP_MAX) {  // TEMP_MAX = 35
+        // Zona normal (25-35°C)
         LED_DECENTE = 1;
-        // Calcular LEDs blancos (lineal: 18°C -> 1 LED, 40°C -> 3 LEDs)
-        if (temp <= 25)
+        if (temp <= 28)
             num_leds = 1;
-        else if (temp <= 33)
+        else if (temp <= 32)
             num_leds = 2;
         else
             num_leds = 3;
@@ -172,10 +165,9 @@ void actualizar_leds(unsigned int temp) {
         else if (num_leds <= 2) set_pwm_duty(170);
         else set_pwm_duty(192);
     }
-    else {  // temp > 40°C
+    else {  // temp > 35°C
         // Zona caliente
         LED_CALIENTE = 1;
-        // Calcular LEDs rojos (lineal: 41°C -> 1 LED, 60°C -> 3 LEDs)
         unsigned int exceso = temp - TEMP_MAX;
         if (exceso > 20) exceso = 20;
         if (exceso <= 6)
@@ -194,7 +186,7 @@ void actualizar_leds(unsigned int temp) {
         else set_pwm_duty(255);
     }
     
-    // Alarma sonora SOLO fuera del rango deseado (18-40°C) ? según laboratorio
+    // Alarma sonora SOLO fuera del rango deseado (25-35°C) según laboratorio
     if (temp < ALARMA_MIN || temp > ALARMA_MAX) {
         set_pwm_duty(128);   // sonido continuo (50% duty)
     } else {
@@ -259,7 +251,7 @@ void main(void) {
         // Conversión sin desbordamiento (unsigned long de 32 bits)
         temperatura_actual = ( (unsigned long)adc * 500UL ) / 1024UL;
         
-        // Limitar a un rango razonable (0-60°C, el LM35 llega a 55°C)
+        // Limitar a un rango razonable (0-60°C)
         if(temperatura_actual > 60) temperatura_actual = 60;
         
         actualizar_leds(temperatura_actual);
